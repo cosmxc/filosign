@@ -1,0 +1,12 @@
+[
+  {"id":"days_monday","title":"MONDAY","videoAsset":"videos/days/monday.mp4","order":0},
+  {"id":"days_tuesday","title":"TUESDAY","videoAsset":"videos/days/tuesday.mp4","order":1},
+  {"id":"days_wednesday","title":"WEDNESDAY","videoAsset":"videos/days/wednesday.mp4","order":2},
+  {"id":"days_thursday","title":"THURSDAY","videoAsset":"videos/days/thursday.mp4","order":3},
+  {"id":"days_friday","title":"FRIDAY","videoAsset":"videos/days/friday.mp4","order":4},
+  {"id":"days_saturday","title":"SATURDAY","videoAsset":"videos/days/saturday.mp4","order":5},
+  {"id":"days_sunday","title":"SUNDAY","videoAsset":"videos/days/sunday.mp4","order":6},
+  {"id":"days_today","title":"TODAY","videoAsset":"videos/days/today.mp4","order":7},
+  {"id":"days_tomorrow","title":"TOMORROW","videoAsset":"videos/days/tomorrow.mp4","order":8},
+  {"id":"days_yesterday","title":"YESTERDAY","videoAsset":"videos/days/yesterday.mp4","order":9}
+]

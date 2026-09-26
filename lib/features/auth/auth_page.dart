@@ -327,9 +327,16 @@ class _AuthPageState extends State<AuthPage> {
                 controller: _nameController,
                 label: 'Full name',
                 icon: Icons.person_outline_rounded,
-                validator: (value) => value == null || value.trim().isEmpty
-                    ? 'Enter your name'
-                    : null,
+                validator: (value) {
+                  if (value == null || value.trim().isEmpty) {
+                    return 'Enter your name';
+                  }
+                  if (value.trim().length > 30) {
+                    return 'Name must be 30 characters or fewer';
+                  }
+                  return null;
+                },
+                hideCounter: true,
               ),
               const SizedBox(height: 14),
             ],
@@ -460,13 +467,18 @@ class _AuthPageState extends State<AuthPage> {
     TextInputType? keyboardType,
     bool obscureText = false,
     Widget? suffix,
+    int? maxLength,
+    bool hideCounter = false,
   }) {
     return TextFormField(
       controller: controller,
       validator: validator,
       keyboardType: keyboardType,
       obscureText: obscureText,
+      maxLength: maxLength,
+      autovalidateMode: AutovalidateMode.onUserInteraction,
       decoration: InputDecoration(
+        counterText: hideCounter ? '' : null,
         labelText: label,
         prefixIcon: Icon(icon, size: 20),
         suffixIcon: suffix,
@@ -492,6 +504,7 @@ class _AuthPageState extends State<AuthPage> {
           horizontal: 16,
           vertical: 17,
         ),
+        errorMaxLines: 3,
       ),
     );
   }

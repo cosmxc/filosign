@@ -1,0 +1,12 @@
+[
+  {"id":"greetings_good_morning","title":"GOOD MORNING","videoAsset":"videos/greetings/good_morning.mp4","order":0},
+  {"id":"greetings_good_afternoon","title":"GOOD AFTERNOON","videoAsset":"videos/greetings/good_afternoon.mp4","order":1},
+  {"id":"greetings_good_evening","title":"GOOD EVENING","videoAsset":"videos/greetings/good_evening.mp4","order":2},
+  {"id":"greetings_hello","title":"HELLO","videoAsset":"videos/greetings/hello.mp4","order":3},
+  {"id":"greetings_how_are_you","title":"HOW ARE YOU","videoAsset":"videos/greetings/how_are_you.mp4","order":4},
+  {"id":"greetings_im_fine","title":"I'M FINE","videoAsset":"videos/greetings/im_fine.mp4","order":5},
+  {"id":"greetings_nice_to_meet_you","title":"NICE TO MEET YOU","videoAsset":"videos/greetings/nice_to_meet_you.mp4","order":6},
+  {"id":"greetings_thank_you","title":"THANK YOU","videoAsset":"videos/greetings/thank_you.mp4","order":7},
+  {"id":"greetings_youre_welcome","title":"YOU'RE WELCOME","videoAsset":"videos/greetings/youre_welcome.mp4","order":8},
+  {"id":"greetings_see_you_tomorrow","title":"SEE YOU TOMORROW","videoAsset":"videos/greetings/see_you_tomorrow.mp4","order":9}
+]

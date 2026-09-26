@@ -1,0 +1,12 @@
+[
+  {"id":"drinks_hot","title":"HOT","videoAsset":"videos/drinks/hot.mp4","order":0},
+  {"id":"drinks_cold","title":"COLD","videoAsset":"videos/drinks/cold.mp4","order":1},
+  {"id":"drinks_juice","title":"JUICE","videoAsset":"videos/drinks/juice.mp4","order":2},
+  {"id":"drinks_milk","title":"MILK","videoAsset":"videos/drinks/milk.mp4","order":3},
+  {"id":"drinks_coffee","title":"COFFEE","videoAsset":"videos/drinks/coffee.mp4","order":4},
+  {"id":"drinks_tea","title":"TEA","videoAsset":"videos/drinks/tea.mp4","order":5},
+  {"id":"drinks_beer","title":"BEER","videoAsset":"videos/drinks/beer.mp4","order":6},
+  {"id":"drinks_wine","title":"WINE","videoAsset":"videos/drinks/wine.mp4","order":7},
+  {"id":"drinks_sugar","title":"SUGAR","videoAsset":"videos/drinks/sugar.mp4","order":8},
+  {"id":"drinks_no_sugar","title":"NO SUGAR","videoAsset":"videos/drinks/no_sugar.mp4","order":9}
+]

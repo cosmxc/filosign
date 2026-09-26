@@ -1,0 +1,12 @@
+[
+  {"id":"survival_understand","title":"UNDERSTAND","videoAsset":"videos/survival/understand.mp4","order":0},
+  {"id":"survival_dont_understand","title":"DON’T UNDERSTAND","videoAsset":"videos/survival/dont_understand.mp4","order":1},
+  {"id":"survival_know","title":"KNOW","videoAsset":"videos/survival/know.mp4","order":2},
+  {"id":"survival_dont_know","title":"DON’T KNOW","videoAsset":"videos/survival/dont_know.mp4","order":3},
+  {"id":"survival_no","title":"NO","videoAsset":"videos/survival/no.mp4","order":4},
+  {"id":"survival_yes","title":"YES","videoAsset":"videos/survival/yes.mp4","order":5},
+  {"id":"survival_wrong","title":"WRONG","videoAsset":"videos/survival/wrong.mp4","order":6},
+  {"id":"survival_correct","title":"CORRECT","videoAsset":"videos/survival/correct.mp4","order":7},
+  {"id":"survival_slow","title":"SLOW","videoAsset":"videos/survival/slow.mp4","order":8},
+  {"id":"survival_fast","title":"FAST","videoAsset":"videos/survival/fast.mp4","order":9}
+]

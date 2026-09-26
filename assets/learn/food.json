@@ -1,0 +1,12 @@
+[
+  {"id":"food_bread","title":"BREAD","videoAsset":"videos/food/bread.mp4","order":0},
+  {"id":"food_egg","title":"EGG","videoAsset":"videos/food/egg.mp4","order":1},
+  {"id":"food_fish","title":"FISH","videoAsset":"videos/food/fish.mp4","order":2},
+  {"id":"food_meat","title":"MEAT","videoAsset":"videos/food/meat.mp4","order":3},
+  {"id":"food_chicken","title":"CHICKEN","videoAsset":"videos/food/chicken.mp4","order":4},
+  {"id":"food_spaghetti","title":"SPAGHETTI","videoAsset":"videos/food/spaghetti.mp4","order":5},
+  {"id":"food_rice","title":"RICE","videoAsset":"videos/food/rice.mp4","order":6},
+  {"id":"food_longanisa","title":"LONGANISA","videoAsset":"videos/food/longanisa.mp4","order":7},
+  {"id":"food_shrimp","title":"SHRIMP","videoAsset":"videos/food/shrimp.mp4","order":8},
+  {"id":"food_crab","title":"CRAB","videoAsset":"videos/food/crab.mp4","order":9}
+]

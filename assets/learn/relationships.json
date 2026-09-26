@@ -1,0 +1,12 @@
+[
+  {"id":"relationships_boy","title":"BOY","videoAsset":"videos/relationships/boy.mp4","order":0},
+  {"id":"relationships_girl","title":"GIRL","videoAsset":"videos/relationships/girl.mp4","order":1},
+  {"id":"relationships_man","title":"MAN","videoAsset":"videos/relationships/man.mp4","order":2},
+  {"id":"relationships_woman","title":"WOMAN","videoAsset":"videos/relationships/woman.mp4","order":3},
+  {"id":"relationships_deaf","title":"DEAF","videoAsset":"videos/relationships/deaf.mp4","order":4},
+  {"id":"relationships_hard_of_hearing","title":"HARD OF HEARING","videoAsset":"videos/relationships/hard_of_hearing.mp4","order":5},
+  {"id":"relationships_wheelchair_person","title":"WHEELCHAIR PERSON","videoAsset":"videos/relationships/wheelchair_person.mp4","order":6},
+  {"id":"relationships_blind","title":"BLIND","videoAsset":"videos/relationships/blind.mp4","order":7},
+  {"id":"relationships_deaf_blind","title":"DEAF BLIND","videoAsset":"videos/relationships/deaf_blind.mp4","order":8},
+  {"id":"relationships_married","title":"MARRIED","videoAsset":"videos/relationships/married.mp4","order":9}
+]
