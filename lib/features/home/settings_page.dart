@@ -301,8 +301,10 @@
                   TextFormField(
                     controller: emailController,
                     keyboardType: TextInputType.emailAddress,
+                    maxLength: 256,
                     decoration: const InputDecoration(
                       labelText: 'New email address',
+                      counterText: '',
                     ),
                     validator: (value) {
                       if (value == null || value.trim().isEmpty) {
@@ -408,8 +410,10 @@
                   TextFormField(
                     controller: newPasswordController,
                     obscureText: obscureNewPassword,
+                    maxLength: 30,
                     decoration: InputDecoration(
                       labelText: 'New password',
+                      counterText: '',
                       suffixIcon: IconButton(
                         icon: Icon(obscureNewPassword ? Icons.visibility_outlined : Icons.visibility_off_outlined),
                         onPressed: () => setDialogState(() => obscureNewPassword = !obscureNewPassword),
@@ -430,8 +434,10 @@
                   TextFormField(
                     controller: confirmPasswordController,
                     obscureText: obscureConfirmPassword,
+                    maxLength: 30,
                     decoration: InputDecoration(
                       labelText: 'Confirm new password',
+                      counterText: '',
                       suffixIcon: IconButton(
                         icon: Icon(obscureConfirmPassword ? Icons.visibility_outlined : Icons.visibility_off_outlined),
                         onPressed: () => setDialogState(() => obscureConfirmPassword = !obscureConfirmPassword),
@@ -584,9 +590,9 @@
       final user = Supabase.instance.client.auth.currentUser;
       if (user == null) return;
       try {
-        await Supabase.instance.client.auth.updateUser(
-          UserAttributes(nonce: otpNonce),
-        );
+        final res = await Supabase.instance.client.functions.invoke('delete-account');
+        if (res.status != 200) throw Exception(res.data);
+        
         await Supabase.instance.client.auth.signOut();
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(builder: (_) => auth.AuthPage()),

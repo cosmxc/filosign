@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'learn_repository.dart';
 import 'category.dart';
 import 'lesson_player_screen.dart';
-
+import 'learn_routes.dart';
 
 class CategoryDetailScreen extends StatelessWidget {
   final String categoryId;
@@ -16,7 +16,7 @@ class CategoryDetailScreen extends StatelessWidget {
       backgroundColor: Colors.white,
       body: FutureBuilder<LearnCategory>(
         future: future,
-        builder: (ctx, snap) {
+        builder: (context, snap) {
           if (!snap.hasData) {
             return const Center(child: CircularProgressIndicator());
           }
@@ -49,11 +49,13 @@ class CategoryDetailScreen extends StatelessWidget {
                 padding: const EdgeInsets.fromLTRB(22, 20, 22, 24),
                 sliver: SliverList.separated(
                   itemCount: cat.sortedLessons.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1, color: Color(0xFFE2EEEB)),
+                  separatorBuilder: (_, __) =>
+                      const Divider(height: 1, color: Color(0xFFE2EEEB)),
                   itemBuilder: (context, index) {
                     final lesson = cat.sortedLessons[index];
                     return ListTile(
-                      contentPadding: const EdgeInsets.symmetric(vertical: 8, horizontal: 0),
+                      contentPadding: const EdgeInsets.symmetric(
+                          vertical: 8, horizontal: 0),
                       title: Text(
                         lesson.title,
                         style: const TextStyle(
@@ -62,16 +64,22 @@ class CategoryDetailScreen extends StatelessWidget {
                           fontWeight: FontWeight.w600,
                         ),
                       ),
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => LessonPlayerScreen(
-                            lessons: cat.sortedLessons,
-                            initialIndex: index,
-                            categoryTitle: cat.title,
+                      onTap: () async {
+                        final result = await Navigator.push<QuizResult>(
+                          context,
+                          MaterialPageRoute<QuizResult>(
+                            builder: (_) => LessonPlayerScreen(
+                              lessons: cat.sortedLessons,
+                              initialIndex: index,
+                              category: cat,
+                            ),
                           ),
-                        ),
-                      ),
+                        );
+                        if (!context.mounted) return;
+                        if (result != null) {
+                          Navigator.of(context).pop(result);
+                        }
+                      },
                     );
                   },
                 ),

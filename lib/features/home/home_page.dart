@@ -1,13 +1,32 @@
 import 'package:filosign/features/home/practice_screen.dart';
-import 'package:filosign/features/quiz/quiz_home_screen.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import 'package:filosign/learn/learn_repository.dart';
+import 'package:filosign/learn/lesson.dart';
+
+
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'video_lesson_page.dart';
+import 'package:filosign/learn/lesson_player_screen.dart';
 import 'profile_page.dart';
 import 'settings_page.dart';
 import 'learn_screen.dart';
 import 'search_results_screen.dart';
+import 'package:filosign/learn/category.dart';
+
+class CurrentLessonData {
+  final LearnCategory category;
+  final int videoId;
+  final List<Lesson> lessons;
+  final int initialIndex;
+
+  CurrentLessonData({
+    required this.category,
+    required this.videoId,
+    required this.lessons,
+    required this.initialIndex,
+  });
+}
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -19,7 +38,99 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   int _selectedIndex = 0;
   final _searchController = TextEditingController();
+  late Future<int> _streakFuture;
+  late Future<int> _lessonsCompletedFuture;
+  late Future<CurrentLessonData?> _currentLessonFuture;
 
+  @override
+  void initState() {
+    super.initState();
+    _streakFuture = _fetchStreak(); 
+    _lessonsCompletedFuture = _fetchLessonsCompleted();
+    _currentLessonFuture = _fetchCurrentLesson();
+  }
+
+   Future<int> _fetchStreak() async {
+    try {
+      final response = await Supabase.instance.client.rpc('get_streak');
+      // Supabase RPC returns a List for set-returning functions, or a scalar.
+      if (response is List) {
+        return response.isNotEmpty ? response.first as int : 0;
+      }
+      return response as int? ?? 0;
+    } catch (e) {
+      debugPrint('Error fetching streak: $e');
+      return 0;
+    }
+  }
+
+  Future<int> _fetchLessonsCompleted() async {
+    try {
+      final response =
+          await Supabase.instance.client.rpc('get_lessons_completed');
+      if (response is List) {
+        return response.isNotEmpty ? response.first as int : 0;
+      }
+      return response as int? ?? 0;
+    } catch (e) {
+      debugPrint('Error fetching lessons completed: $e');
+      return 0;
+    }
+  }
+  
+  Future<CurrentLessonData?> _fetchCurrentLesson() async {
+    final userId = Supabase.instance.client.auth.currentUser?.id;
+    if (userId == null) return null;
+
+    try {
+      final response =  
+          await Supabase.instance.client.rpc('get_current_lesson');
+      if (response == null) return null;
+
+      final map = response as Map<String, dynamic>;
+      final videoId = map['video_id'] as int;
+
+      // ✅ Correct way to access a static getter
+      for (final catId in LearnRepository.allCategoryIds) {
+        final category = await LearnRepository.instance.getCategory(catId);
+
+        final initialIndex = category.sortedLessons.indexWhere((lesson) {
+          if (lesson.videoAsset == null || lesson.videoAsset!.isEmpty) {
+            return false;
+          }
+          final filename = lesson.videoAsset!.split('/').last;
+          final idStr = filename.split('.').first;
+          return idStr == videoId.toString();
+        });
+
+        if (initialIndex != -1) {
+          return CurrentLessonData(
+            category: category,
+            videoId: videoId,
+            lessons: category.sortedLessons,
+            initialIndex: initialIndex,
+          );
+        }
+      }
+
+      return null;
+    } catch (e) {
+      debugPrint('Error fetching current lesson: $e');
+      return null;
+    }
+  }
+
+   Future<void> _saveCurrentLesson(int videoId) async {
+    try {
+      await Supabase.instance.client.rpc(
+        'save_current_lesson',
+        params: {'p_video_id': videoId},
+      );
+    } catch (e) {
+      debugPrint('Error saving current lesson: $e');
+    }
+  }
+  
   @override
   void dispose() {
     _searchController.dispose();
@@ -152,19 +263,6 @@ class _HomePageState extends State<HomePage> {
                   ),
                 ),
               ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: _buildActionButton(
-                  icon: Icons.quiz_rounded,
-                  title: 'Quiz',
-                  subtitle: '10 questions',
-                  color: const Color(0xFF6D5BD0),
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const QuizHomeScreen()),
-                  ),
-                ),
-              ),
             ],
           ),
           const SizedBox(height: 28),
@@ -217,7 +315,7 @@ class _HomePageState extends State<HomePage> {
             ),
           ),
           const SizedBox(width: 16),
-          const Expanded(
+          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -225,17 +323,39 @@ class _HomePageState extends State<HomePage> {
                   'Your learning streak',
                   style: TextStyle(color: Colors.white70, fontSize: 13),
                 ),
-                SizedBox(height: 3),
-                Text(
-                  '3 days',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 25,
-                    fontWeight: FontWeight.w800,
-                  ),
+                 FutureBuilder<int>(
+                  future: _streakFuture,
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const SizedBox(
+                        height: 30,
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              color: Colors.white,
+                              strokeWidth: 2,
+                            ),
+                          ),
+                        ),
+                      );
+                    }
+                    final streak = snapshot.data ?? 0;
+                    return Text(
+                      '$streak ${streak == 1 ? 'day' : 'days'}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 25,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    );
+                  },
                 ),
-                SizedBox(height: 3),
-                Text(
+                
+                const SizedBox(height: 3),
+                const Text(
                   'Keep it going today!',
                   style: TextStyle(color: Colors.white, fontSize: 13),
                 ),
@@ -301,69 +421,159 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _buildLessonPreview() {
-    return Container(
-      padding: const EdgeInsets.all(17),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFFE2EEEB)),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 52,
-            height: 52,
+    Widget _buildLessonPreview() {
+    return FutureBuilder<CurrentLessonData?>(
+      future: _currentLessonFuture,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return Container(
+            padding: const EdgeInsets.all(17),
             decoration: BoxDecoration(
-              color: const Color(0xFFD8F3EE),
-              borderRadius: BorderRadius.circular(14),
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: const Color(0xFFE2EEEB)),
             ),
-            child: const Icon(
-              Icons.waving_hand_rounded,
-              color: Color(0xFF087F73),
-              size: 28,
-            ),
-          ),
-          const SizedBox(width: 14),
-          const Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Everyday Greetings',
-                  style: TextStyle(
-                    color: Color(0xFF153B39),
-                    fontWeight: FontWeight.w700,
-                    fontSize: 15,
-                  ),
-                ),
-                SizedBox(height: 5),
-                Text(
-                  'Beginner lesson  ·  20 min',
-                  style: TextStyle(color: Color(0xFF6B8581), fontSize: 12),
-                ),
-              ],
-            ),
-          ),
-          IconButton(
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => const VideoLessonPage(
-                  title: 'Everyday Greetings',
-                  assetPath: 'assets/0.mp4',
+            child: const Center(
+              child: SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(
+                  color: Color(0xFF087F73),
+                  strokeWidth: 2,
                 ),
               ),
             ),
-            icon: const Icon(
-              Icons.play_circle_fill_rounded,
-              color: Color(0xFF087F73),
-              size: 32,
+          );
+        }
+
+        final data = snapshot.data;
+
+
+        if (data == null) {
+          return Container(
+            padding: const EdgeInsets.all(17),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: const Color(0xFFE2EEEB)),
             ),
+            child: Row(
+              children: [
+                Container(
+                  width: 52,
+                  height: 52,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFD8F3EE),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: const Icon(
+                    Icons.school_rounded,
+                    color: Color(0xFF087F73),
+                    size: 28,
+                  ),
+                ),
+                const SizedBox(width: 14),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Start Learning',
+                        style: TextStyle(
+                          color: Color(0xFF153B39),
+                          fontWeight: FontWeight.w700,
+                          fontSize: 15,
+                        ),
+                      ),
+                      SizedBox(height: 5),
+                      Text(
+                        'Pick a category to begin',
+                        style: TextStyle(color: Color(0xFF6B8581), fontSize: 12),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
+
+  
+        final lesson = data.lessons[data.initialIndex];
+        final lessonTitle = lesson.title;
+        final videoAsset = lesson.videoAsset ?? '';
+
+        return Container(
+          padding: const EdgeInsets.all(17),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: const Color(0xFFE2EEEB)),
           ),
-        ],
-      ),
+          child: Row(
+            children: [
+              Container(
+                width: 52,
+                height: 52,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFD8F3EE),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: const Icon(
+                  Icons.play_circle_fill_rounded,
+                  color: Color(0xFF087F73),
+                  size: 28,
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      data.category.title, 
+                      style: const TextStyle(
+                        color: Color(0xFF153B39),
+                        fontWeight: FontWeight.w700,
+                        fontSize: 15,
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      lessonTitle, 
+                      style: const TextStyle(
+                        color: Color(0xFF6B8581),
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                onPressed: videoAsset.isEmpty
+                    ? null
+                    : () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => LessonPlayerScreen(
+                              lessons: data.lessons,
+                              initialIndex: data.initialIndex,
+                              category: data.category,
+                            ),
+                          ),
+                        ),
+                icon: Icon(
+                  Icons.play_circle_fill_rounded,
+                  color: videoAsset.isEmpty
+                      ? Colors.grey
+                      : const Color(0xFF087F73),
+                  size: 32,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
-}
- 
+  }
 }

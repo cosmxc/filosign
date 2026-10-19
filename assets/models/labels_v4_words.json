@@ -8,11 +8,13 @@
   "blue",
   "boy",
   "bread",
+  "brown",
   "chicken",
   "coffee",
   "cold",
   "correct",
   "cousin",
+  "crab",
   "dark",
   "daughter",
   "deaf",
@@ -40,6 +42,7 @@
   "hard_of_hearing",
   "hello",
   "hot",
+  "how_are_you",
   "im_fine",
   "january",
   "juice",
@@ -100,5 +103,6 @@
   "yellow",
   "yes",
   "yesterday",
-  "youre_welcome"
+  "youre_welcome",
+  "__none__"
 ]

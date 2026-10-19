@@ -1,0 +1,51 @@
+name: iOS Deep Compiler Validation
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  validate-ios-framework:
+    name: Flutter iOS Diagnostic Check
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter Environment
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Resolve Flutter Dependencies
+        run: flutter pub get
+
+      - name: Regenerate Missing iOS Scaffolding
+        run: |
+          # Safe fallback check: If files were missed by git, recreate them on the runner
+          if [ ! -d "ios" ] || [ ! -f "ios/Podfile" ]; then
+            echo "⚠️ iOS directory or Podfile missing. Re-generating scaffolding..."
+            flutter create --platforms ios .
+          fi
+
+      - name: Auto-Inject Bundle Identifier
+        run: |
+          sed -i '' 's/PRODUCT_BUNDLE_IDENTIFIER = .*;/PRODUCT_BUNDLE_IDENTIFIER = com.filosign.app;/g' ios/Runner.xcodeproj/project.pbxproj || true
+
+      - name: Run Platform Compilation Test
+        run: |
+          # Compiles the workspace and creates an unsigned .ipa package bundle
+          flutter build ipa --release --no-codesign -v
+
+      - name: Upload IPA Artifact to GitHub
+        uses: actions/upload-artifact@v4
+        with:
+          name: Unsigned-iOS-App
+          path: |
+            build/ios/ipa/*.ipa
+            build/ios/iphoneos/*.app
+          retention-days: 7

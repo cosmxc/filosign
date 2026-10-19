@@ -32,6 +32,18 @@ class LearnRepository {
     return category;
   }
 
+    // ADDED: Helper to find the string catId using the title from the database
+  String? getCatIdByTitle(String title) {
+    for (var entry in _categoryMeta.entries) {
+      if (entry.value['title'].toString().toLowerCase() == title.toLowerCase()) {
+        return entry.key;
+      }
+    }
+    return null;
+  }
+
+ 
+
   static final Map<String, Map<String, dynamic>> _categoryMeta = {
     'letters': {
       'title': 'Letters',
