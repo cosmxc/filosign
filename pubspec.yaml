@@ -4,7 +4,7 @@ publish_to: 'none'
 version: 0.1.0+1
 
 environment:
-  sdk: ^3.13.2
+  sdk: '>=3.8.0 <4.0.0' 
 
 dependencies:
   video_player: ^2.9.1
@@ -12,12 +12,15 @@ dependencies:
     sdk: flutter
   supabase_flutter: ^2.18.0
   shared_preferences: ^2.2.2
-  flutter_widget_from_html: ^0.17.4
   # FiloSign live recognizer (practice + quiz)
   camera: ^0.12.1
   hand_landmarker: ^3.1.0
   flutter_pose_detection: ^0.4.1
   tflite_flutter: ^0.12.0
+  flutter_widget_from_html: ^0.17.4
+  confetti: ^0.8.0
+  share_plus: ^13.3.1
+  path_provider: ^2.1.6
 
 dev_dependencies:
   flutter_test:
@@ -40,14 +43,12 @@ flutter:
     - assets/videos/food/
     - assets/videos/greetings/
     - assets/videos/letters/
-    - assets/videos/months/
     - assets/videos/numbers/
-    - assets/html/
     - assets/models/
+    - assets/html/
 
-
-flutter_icons: 
+flutter_launcher_icons: 
   android: true
   ios: true
   image_path: "assets/Icon.png"
-
+  remove_alpha_ios: true

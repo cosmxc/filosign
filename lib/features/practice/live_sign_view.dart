@@ -18,6 +18,8 @@ class LiveSignState {
   final String head;
   final int latencyMs;
   final List<bool> present;
+  final bool notRecognized;
+  final bool bodyVisible;
   const LiveSignState({
     required this.prediction,
     required this.locked,
@@ -26,6 +28,8 @@ class LiveSignState {
     required this.head,
     required this.latencyMs,
     required this.present,
+    this.notRecognized = false,
+    this.bodyVisible = true,
   });
 }
 
@@ -38,6 +42,9 @@ class LiveSignView extends StatefulWidget {
   final bool dominantLeft;
   final int resetToken;
   final ValueChanged<LiveSignState>? onUpdate;
+  final bool active; // false = stop processing frames (camera stays open)
+  /// Gives the parent the recognizer (used for the debug capture).
+  final ValueChanged<V4SignRecognizer>? onRecognizer;
 
   const LiveSignView({
     super.key,
@@ -45,9 +52,10 @@ class LiveSignView extends StatefulWidget {
     required this.letters,
     this.dominantLeft = false,
     this.resetToken = 0,
+    this.active = true,
     this.onUpdate,
+    this.onRecognizer,
   });
-
   @override
   State<LiveSignView> createState() => _LiveSignViewState();
 }
@@ -58,12 +66,37 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
   bool _streaming = false;
   int _lastSentMs = 0;
   int _lastPoseMs = 0;
+  int _lastUpdateMs = 0;
+  bool _lastLocked = false;
+  int _lastPoseOkMs = 0;
+  bool _disposed = false;
+
+  // Serializes camera teardown/setup across LiveSignView instances, so a new
+  // view never opens the front camera while the previous one is still closing.
+  // Every job is isolated: a failure or hang in one never blocks the next.
+  static Future<void> _lastTeardown = Future.value();
+
+  static void _enqueue(Future<void> Function() job) {
+    _lastTeardown = _lastTeardown
+        .catchError((_) {})            // a previous failure never blocks the next job
+        .then((_) => job())
+        .catchError((_) {});
+  }
+
+  /// Runs [f] with a timeout; swallows failures and hangs. Used for every
+  /// native dispose/stop call so one bad step can't wedge the chain.
+  static Future<void> _quiet(FutureOr<void> Function() f) async {
+    try {
+      await Future.sync(f).timeout(const Duration(seconds: 2));
+    } catch (_) {}
+  }
 
   HandLandmarkerPlugin? _landmarker;
   StreamSubscription<List<Hand>>? _landmarkSub;
   List<Hand> _hands = const [];
 
-  final NpuPoseDetector _pose = NpuPoseDetector(config: PoseDetectorConfig.realtime());
+  final NpuPoseDetector _pose =
+      NpuPoseDetector(config: PoseDetectorConfig.realtime());
   bool _poseReady = false;
   bool _poseBusy = false;
   List<PoseLandmark> _latestPose = const [];
@@ -74,8 +107,10 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _recognizer = V4SignRecognizer(letters: widget.letters)..dominantLeft = widget.dominantLeft;
+    _recognizer = V4SignRecognizer(letters: widget.letters)
+      ..dominantLeft = widget.dominantLeft;
     _recognizer.init();
+    WidgetsBinding.instance.addPostFrameCallback((_) => widget.onRecognizer?.call(_recognizer));
     _pose.initialize().then((_) {
       if (mounted) setState(() => _poseReady = true);
     }).catchError((_) {});
@@ -85,9 +120,16 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
       delegate: HandLandmarkerDelegate.gpu,
     );
     _landmarkSub = _landmarker!.landmarkStream.listen((hands) {
-      if (!mounted) return;
+      if (!mounted || _disposed || !widget.active) return;
       final p = _recognizer.addFrame(hands, _latestPose, widget.candidates);
       setState(() => _hands = hands);
+      // The parent rebuilds on every update; ~8 per second is plenty for the
+      // text and keeps the UI thread free (lock changes go out at once).
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final locked = _recognizer.isLocked;
+      if (now - _lastUpdateMs < 120 && locked == _lastLocked) return;
+      _lastUpdateMs = now;
+      _lastLocked = locked;
       widget.onUpdate?.call(LiveSignState(
         prediction: p,
         locked: _recognizer.isLocked,
@@ -96,6 +138,8 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
         head: _recognizer.headName,
         latencyMs: _recognizer.lastLatencyMs,
         present: _recognizer.lastPresent,
+        notRecognized: _recognizer.notRecognized,
+        bodyVisible: _recognizer.lastPoseOk,
       ));
     });
     _setupCamera();
@@ -104,13 +148,27 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
   @override
   void didUpdateWidget(covariant LiveSignView old) {
     super.didUpdateWidget(old);
-    if (old.resetToken != widget.resetToken || old.dominantLeft != widget.dominantLeft) {
+    if (old.resetToken != widget.resetToken ||
+        old.dominantLeft != widget.dominantLeft) {
       _recognizer.dominantLeft = widget.dominantLeft;
       _recognizer.reset();
+    }
+    if (old.active != widget.active) {
+      if (widget.active) {
+        _recognizer.reset();
+        _startStream();
+      } else {
+        _stopStream();
+      }
     }
   }
 
   Future<void> _setupCamera() async {
+    // Bounded wait: a hung teardown can't block this view forever.
+    try {
+      await _lastTeardown.timeout(const Duration(seconds: 3));
+    } catch (_) {}
+    if (!mounted) return;
     try {
       final cameras = await availableCameras();
       if (cameras.isEmpty) {
@@ -123,13 +181,15 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
       );
       final controller = CameraController(
         front,
-        ResolutionPreset.low,
+        // 480p: at 240x320 the body/pose detector usually found nothing and hand
+        // tracking dropped frames (teammate debug captures); training was 720p.
+        ResolutionPreset.medium,
         enableAudio: false,
         imageFormatGroup: ImageFormatGroup.yuv420,
       );
       await controller.initialize();
       if (!mounted) {
-        await controller.dispose();
+        await _quiet(controller.dispose);
         return;
       }
       setState(() => _controller = controller);
@@ -147,25 +207,36 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
     final controller = _controller;
     final landmarker = _landmarker;
     if (controller == null || landmarker == null || _streaming) return;
-    final orientation = controller.description.sensorOrientation;
-    await controller.startImageStream((CameraImage image) {
-      if (!_recognizer.hasImageSize) {
-        _recognizer.configureCamera(
-            sensorOrientation: orientation, imageWidth: image.width, imageHeight: image.height);
-      }
-      final now = DateTime.now().millisecondsSinceEpoch;
-      if (now - _lastSentMs >= 33) {
-        _lastSentMs = now;
-        try {
-          landmarker.processFrame(image, orientation);
-        } catch (_) {}
-      }
-      if (now - _lastPoseMs >= 100) {
-        _lastPoseMs = now;
-        _feedPose(image, orientation);
-      }
-    });
+    // Flip before the await so _setupCamera and didUpdateWidget can't both
+    // enter and trigger "already streaming".
     _streaming = true;
+    try {
+      final orientation = controller.description.sensorOrientation;
+      await controller.startImageStream((CameraImage image) {
+        if (_disposed || !widget.active) return;
+        if (!_recognizer.hasImageSize) {
+          _recognizer.configureCamera(
+              sensorOrientation: orientation,
+              imageWidth: image.width,
+              imageHeight: image.height);
+        }
+        final now = DateTime.now().millisecondsSinceEpoch;
+        if (now - _lastSentMs >= 33) {
+          _lastSentMs = now;
+          try {
+            landmarker.processFrame(image, orientation);
+          } catch (_) {}
+        }
+        // Pose frames are copied over the platform channel; 5 per second keeps
+        // the UI thread responsive (the recognizer reuses the latest pose).
+        if (now - _lastPoseMs >= 200) {
+          _lastPoseMs = now;
+          _feedPose(image, orientation);
+        }
+      });
+    } catch (_) {
+      _streaming = false;
+    }
   }
 
   Future<void> _feedPose(CameraImage image, int orientation) async {
@@ -174,7 +245,11 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
     try {
       final planes = [
         for (final p in image.planes)
-          {'bytes': p.bytes, 'bytesPerRow': p.bytesPerRow, 'bytesPerPixel': p.bytesPerPixel ?? 1}
+          {
+            'bytes': p.bytes,
+            'bytesPerRow': p.bytesPerRow,
+            'bytesPerPixel': p.bytesPerPixel ?? 1,
+          }
       ];
       final res = await _pose.processFrame(
         planes: planes,
@@ -183,15 +258,24 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
         format: 'yuv420',
         rotation: orientation,
       );
-      _latestPose = res.poses.isNotEmpty ? res.poses.first.landmarks : const [];
+      if (_disposed) return;
+      // Keep the last good pose for a moment when one detection fails, so the
+      // body location doesn't flicker on and off (training always had it).
+      final now = DateTime.now().millisecondsSinceEpoch;
+      if (res.poses.isNotEmpty) {
+        _latestPose = res.poses.first.landmarks;
+        _lastPoseOkMs = now;
+      } else if (now - _lastPoseOkMs > 1500) {
+        _latestPose = const [];
+      }
     } catch (_) {
     } finally {
       _poseBusy = false;
     }
   }
 
-  Future<void> _stopStream() async {
-    final controller = _controller;
+  Future<void> _stopStream([CameraController? c]) async {
+    final controller = c ?? _controller;
     if (controller != null && _streaming) {
       try {
         await controller.stopImageStream();
@@ -202,28 +286,45 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    final controller = _controller;
-    if (controller == null || !controller.value.isInitialized) return;
-    if (state == AppLifecycleState.inactive || state == AppLifecycleState.paused) {
-      _stopStream();
-      _recognizer.reset();
-      controller.dispose();
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused) {
+      final controller = _controller;
+      if (controller == null) return;
       _controller = null;
+      _recognizer.reset();
+      if (mounted) setState(() {});
+      _enqueue(() async {
+        await _quiet(() => _stopStream(controller));
+        await _quiet(controller.dispose);
+      });
     } else if (state == AppLifecycleState.resumed) {
-      _setupCamera();
+      if (_controller == null && !_disposed) _setupCamera();
     }
   }
 
   @override
   void dispose() {
+    _disposed = true;
     WidgetsBinding.instance.removeObserver(this);
     _landmarkSub?.cancel();
-    _stopStream();
-    _recognizer.dispose();
-    _controller?.dispose();
-    _landmarker?.dispose();
-    _pose.dispose();
+    _enqueue(_teardown);
     super.dispose();
+  }
+
+  /// Ordered shutdown: stop frames, let any pose call finish, then free native
+  /// resources. Every step is isolated and time-boxed, so one failure can't
+  /// skip the rest. Runs in the background so dispose() returns immediately.
+  Future<void> _teardown() async {
+    final controller = _controller;
+    _controller = null;
+    await _quiet(() => _stopStream(controller));
+    for (var i = 0; i < 20 && _poseBusy; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 25));
+    }
+    await _quiet(_recognizer.dispose);
+    await _quiet(() => controller?.dispose());
+    await _quiet(() => _landmarker?.dispose());
+    await _quiet(_pose.dispose);
   }
 
   @override
@@ -233,13 +334,15 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
         child: Padding(
           padding: const EdgeInsets.all(24),
           child: Text(_cameraError!,
-              textAlign: TextAlign.center, style: const TextStyle(color: Colors.white)),
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.white)),
         ),
       );
     }
     final controller = _controller;
     if (controller == null || !controller.value.isInitialized) {
-      return const Center(child: CircularProgressIndicator(color: Color(0xFF0D9488)));
+      return const Center(
+          child: CircularProgressIndicator(color: Color(0xFF0D9488)));
     }
     final previewSize = controller.value.previewSize;
     return Center(
@@ -255,7 +358,8 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
                   hands: _hands,
                   previewSize: previewSize,
                   sensorOrientation: controller.description.sensorOrientation,
-                  isFront: controller.description.lensDirection == CameraLensDirection.front,
+                  isFront: controller.description.lensDirection ==
+                      CameraLensDirection.front,
                 ),
               ),
           ],

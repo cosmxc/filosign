@@ -1,7 +1,13 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../../learn/category.dart';
 import '../../recognizer/sign_labels.dart';
+import '../../recognizer/v4_sign_recognizer.dart';
 import 'live_sign_view.dart';
 
 /// Live camera practice for one Learn category: sign anything from the
@@ -23,8 +29,47 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
   bool _dominantLeft = false;
   int _resetToken = 0;
   LiveSignState? _state;
+  V4SignRecognizer? _recognizer;
 
-  String _title(String label) => _titleByLabel[label] ?? label;
+  /// Debug capture: ask which sign was really done, save the last few seconds
+  /// of landmarks (no video) as JSON and open the share sheet.
+  Future<void> _debugCapture() async {
+    final rec = _recognizer;
+    if (rec == null) return;
+    final snapshot = rec.debugSnapshot(candidates: _titleByLabel.keys.toList());
+    if ((snapshot['frames'] as List).isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Sign first, then tap the bug button.')));
+      return;
+    }
+    final expected = await showDialog<String>(
+      context: context,
+      builder: (_) => SimpleDialog(
+        title: const Text('Which sign were you doing?'),
+        children: [
+          for (final l in widget.category.sortedLessons)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, modelLabelForLesson(l.id)),
+              child: Text(l.title),
+            ),
+        ],
+      ),
+    );
+    if (expected == null) return;
+    snapshot['expected'] = expected;
+    snapshot['guess'] = _state?.prediction.sign;
+    final dir = await getTemporaryDirectory();
+    final stamp = DateTime.now().toIso8601String().replaceAll(RegExp(r'[:.]'), '-');
+    final file = File('${dir.path}/filosign_debug_${expected}_$stamp.json');
+    await file.writeAsString(jsonEncode(snapshot));
+    await SharePlus.instance.share(ShareParams(
+      files: [XFile(file.path)],
+      text: 'FiloSign debug: did "$expected", app said "${snapshot['guess']}"',
+    ));
+  }
+
+  String _title(String label) =>
+      label == V4SignRecognizer.noneLabel ? 'Not a sign' : (_titleByLabel[label] ?? label);
 
   void _again() => setState(() {
         _resetToken++;
@@ -41,6 +86,11 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
         foregroundColor: Colors.white,
         title: Text('${widget.category.title} practice'),
         actions: [
+          IconButton(
+            tooltip: 'Save debug data (wrong guess)',
+            icon: const Icon(Icons.bug_report_outlined),
+            onPressed: _debugCapture,
+          ),
           TextButton.icon(
             style: TextButton.styleFrom(foregroundColor: Colors.white),
             onPressed: () => setState(() {
@@ -61,6 +111,7 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
             dominantLeft: _dominantLeft,
             resetToken: _resetToken,
             onUpdate: (st) => setState(() => _state = st),
+            onRecognizer: (r) => _recognizer = r,
           ),
           Positioned(
             top: 12,
@@ -69,9 +120,12 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
             child: _HintCard(
               text: 'Sign any ${widget.category.title.toLowerCase()} sign'
                   ' · hands: ${s?.handCount ?? 0}',
-              tip: widget.category.id == 'months'
-                  ? 'Tip: stand back so both elbows show, and turn slightly so your signing hand is visible.'
-                  : null,
+              tip: (s != null && s.handCount > 0 && !s.bodyVisible &&
+                      widget.category.id != lettersCategoryId)
+                  ? 'Step back: your shoulders and face must be in view for this sign.'
+                  : widget.category.id == 'months'
+                      ? 'Tip: stand back so both elbows show, and turn slightly so your signing hand is visible.'
+                      : null,
             ),
           ),
           if (s != null && s.top3.isNotEmpty)
@@ -86,6 +140,7 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
                 sign: s?.prediction.sign == null ? null : _title(s!.prediction.sign!),
                 confidence: s?.prediction.confidence ?? 0,
                 locked: s?.locked ?? false,
+                notRecognized: s?.notRecognized ?? false,
               ),
             ),
           ),
@@ -142,7 +197,7 @@ class Top3Panel extends StatelessWidget {
         children: [
           Text('Top 3 · ${state.head} · ${state.latencyMs}ms',
               style: const TextStyle(color: Colors.white70, fontSize: 11)),
-          Text('hands: ${p[0] ? 'dominant' : '-'} / ${p[1] ? 'other' : '-'}',
+          Text('hands: ${p[0] ? 'dominant' : '-'} / ${p[1] ? 'other' : '-'} · body: ${state.bodyVisible ? 'yes' : 'NO'}',
               style: const TextStyle(color: Colors.white70, fontSize: 11)),
           for (var i = 0; i < state.top3.length; i++)
             Text(
@@ -165,12 +220,14 @@ class FeedbackBanner extends StatelessWidget {
   final double confidence;
   final bool locked;
   final String lockedSubtitle;
+  final bool notRecognized;
   const FeedbackBanner({
     super.key,
     required this.sign,
     required this.confidence,
     required this.locked,
     this.lockedSubtitle = 'Tap to sign again',
+    this.notRecognized = false,
   });
 
   @override
@@ -178,7 +235,11 @@ class FeedbackBanner extends StatelessWidget {
     final pct = (confidence * 100).round();
     final Color color;
     final String title, subtitle;
-    if (sign == null) {
+    if (notRecognized && !locked) {
+      color = Colors.blueGrey.shade600;
+      title = 'Not recognized';
+      subtitle = 'Do the complete sign clearly, both hands in view';
+    } else if (sign == null) {
       color = const Color(0xFF153B39);
       title = 'Waiting…';
       subtitle = 'Start signing';

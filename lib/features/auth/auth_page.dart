@@ -699,20 +699,6 @@ Future<void> _openPrivacy() async {
 
             const SizedBox(height: 12),
 
-            // TEST BUILDS ONLY: skip login to test Practice/Quiz. Shown in debug
-            // builds, or release builds made with --dart-define=FILOSIGN_TEST=true.
-            if (kDebugMode || const bool.fromEnvironment('FILOSIGN_TEST'))
-              Center(
-                child: TextButton(
-                  onPressed: () => Navigator.pushAndRemoveUntil(
-                    context,
-                    MaterialPageRoute(builder: (_) => const HomePage()),
-                    (route) => false,
-                  ),
-                  child: const Text('Skip login (test build only)'),
-                ),
-              ),
-
             // Alternative sign-in options - show based on action
             if (!_isSignUp) ...[
               if (_action == AuthAction.signInWithPassword)

@@ -3,12 +3,16 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../learn/category.dart';
 import '../../learn/lesson.dart';
 import '../../recognizer/sign_labels.dart';
 import '../practice/live_practice_screen.dart' show FeedbackBanner, Top3Panel;
 import '../practice/live_sign_view.dart';
+import '../../recognizer/v4_sign_recognizer.dart';
+import 'package:filosign/widgets/celebration_overlay.dart';
+import 'package:filosign/learn/learn_routes.dart';
 
 const _teal = Color(0xFF087F73);
 const _ink = Color(0xFF153B39);
@@ -45,6 +49,11 @@ class _QuizScreenState extends State<QuizScreen> {
   bool? _correct; // null = not answered yet
   String? _answerText; // what the user signed / picked
   Lesson? _picked;
+  bool _celebrating = false;
+  bool _saving = false;
+  bool _saveFailed = false;
+  bool _serverPassed = false;
+  bool _nextUnlocked = false;
 
   @override
   void initState() {
@@ -66,7 +75,8 @@ class _QuizScreenState extends State<QuizScreen> {
     final types = [for (var i = 0; i < n; i++) i < n ~/ 2]..shuffle(_rng);
     return [
       for (var i = 0; i < n; i++)
-        _Question(picks[i], types[i], types[i] ? const [] : _optionsFor(picks[i], pool))
+        _Question(
+            picks[i], types[i], types[i] ? const [] : _optionsFor(picks[i], pool))
     ];
   }
 
@@ -94,16 +104,21 @@ class _QuizScreenState extends State<QuizScreen> {
       if (correct) _score++;
     });
     if (!correct) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _showHint(_questions[_index].lesson));
+      WidgetsBinding.instance.addPostFrameCallback(
+          (_) => _showHint(_questions[_index].lesson));
     }
   }
 
-  void _next() => setState(() {
-        _index++;
-        _correct = null;
-        _answerText = null;
-        _picked = null;
-      });
+  void _next() {
+    final finishing = _index + 1 >= _questions.length;
+    setState(() {
+      _index++;
+      _correct = null;
+      _answerText = null;
+      _picked = null;
+    });
+    if (finishing) _submitScore();
+  }
 
   void _restart() => setState(() {
         _questions = _buildQuestions();
@@ -112,26 +127,151 @@ class _QuizScreenState extends State<QuizScreen> {
         _correct = null;
         _answerText = null;
         _picked = null;
+        _celebrating = false;
+        _saving = false;
+        _saveFailed = false;
+        _serverPassed = false;
+        _nextUnlocked = false;
       });
+
+  void _showMessage(String message, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor:
+              isError ? const Color(0xFFB42318) : const Color(0xFF087F73),
+        ),
+      );
+  }
+
+  /// Saves the score first; the celebration only starts once it is stored, so
+  /// the unlock never depends on the 5-second overlay finishing.
+  Future<void> _submitScore() async {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) {
+      _showMessage('Sign in to save your score.', isError: true);
+      return;
+    }
+    final dbId = kCategoryDbIds[widget.category.id];
+    if (dbId == null) {
+      _saveError('Unknown category: ${widget.category.id}');
+      return;
+    }
+
+    setState(() {
+      _saving = true;
+      _saveFailed = false;
+    });
+    progressVersion.value++;
+
+    // The server expects a percentage (0-100), not a raw count.
+    final percent = _score * 100 / _questions.length;
+
+    try {
+      final res = await Supabase.instance.client.rpc('submit_quiz', params: {
+        'p_category_id': dbId,
+        'p_score': percent,
+      });
+      debugPrint('submit_quiz -> $res');///to be removed
+      if (!mounted) return;
+      final map = res is Map
+          ? Map<String, dynamic>.from(res)
+          : const <String, dynamic>{};
+      final passed = map['passed'] == true;
+      setState(() {
+        _saving = false;
+        _serverPassed = passed;
+        _nextUnlocked = map['next_category_unlocked'] != null;
+        _celebrating = passed;
+      });
+    } on PostgrestException catch (e) {
+      _saveError('Could not save score: ${e.message}');
+    } on AuthException catch (e) {
+      _saveError('Auth error: ${e.code ?? 'unknown'}');
+    } catch (_) {
+      _saveError('Could not submit quiz score. Please try again.');
+    }
+  }
+
+  void _saveError(String message) {
+    if (!mounted) return;
+    setState(() {
+      _saving = false;
+      _saveFailed = true;
+    });
+    _showMessage(message, isError: true);
+  }
+
+  /// The single source of truth for what this route pops. Every exit path
+  /// (celebration Continue, countdown, "Back to quizzes", system back) ends
+  /// up calling [_finishQuiz] or being intercepted by the [PopScope] below,
+  /// so CategoryDetailScreen always receives a typed [QuizResult] and can
+  /// forward it up to LearnScreen.
+  QuizResult get _result => QuizResult(
+        categoryId: widget.category.id,
+        score: _score,
+        total: _questions.length,
+        passed: _serverPassed,
+        nextUnlocked: _nextUnlocked,
+      );
+
+  void _finishQuiz() {
+    if (!mounted) return;
+    debugPrint('_finishQuiz popping $_result.nextUnlocked');//to be removed
+    Navigator.of(context).pop(_result);
+  }
 
   Future<void> _showHint(Lesson lesson) => showDialog<void>(
         context: context,
-        builder: (_) => _HintDialog(lesson: lesson, months: widget.category.id == 'months'),
+        builder: (_) =>
+            _HintDialog(lesson: lesson, months: widget.category.id == 'months'),
       );
 
   @override
   Widget build(BuildContext context) {
     final done = _index >= _questions.length;
-    return Scaffold(
-      backgroundColor: _bg,
-      appBar: AppBar(
+    return PopScope<QuizResult>(
+      // Intercept the system back gesture / back button so it can't leave
+      // without a result. Direct `Navigator.pop()` calls from buttons still
+      // work — they bypass canPop and carry their own value.
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        _finishQuiz();
+      },
+      child: Scaffold(
         backgroundColor: _bg,
-        foregroundColor: _ink,
-        elevation: 0,
-        title: Text('${widget.category.title} quiz',
-            style: const TextStyle(fontWeight: FontWeight.w800)),
+        appBar: AppBar(
+          backgroundColor: _bg,
+          foregroundColor: _ink,
+          elevation: 0,
+          title: Text('${widget.category.title} quiz',
+              style: const TextStyle(fontWeight: FontWeight.w800)),
+        ),
+        body: SafeArea(
+          child: done
+              ? Stack(
+                  children: [
+                    _summary(),
+                    if (_celebrating)
+                      Positioned.fill(
+                        child: CelebrationOverlay(
+                          title: 'Congratulations!',
+                          message: _nextUnlocked
+                              ? 'You scored $_score / ${_questions.length}. The next category is unlocked!'
+                              : 'You scored $_score / ${_questions.length} on the ${widget.category.title} quiz.',
+                          onFinished: _finishQuiz,
+                        ),
+                      ),
+                  ],
+                )
+              : _questionView(_questions[_index]),
+        ),
       ),
-      body: SafeArea(child: done ? _summary() : _questionView(_questions[_index])),
     );
   }
 
@@ -144,10 +284,12 @@ class _QuizScreenState extends State<QuizScreen> {
           child: Row(
             children: [
               Text('Question ${_index + 1} / ${_questions.length}',
-                  style: const TextStyle(color: _muted, fontWeight: FontWeight.w600)),
+                  style:
+                      const TextStyle(color: _muted, fontWeight: FontWeight.w600)),
               const Spacer(),
               Text('Score $_score',
-                  style: const TextStyle(color: _teal, fontWeight: FontWeight.w800)),
+                  style:
+                      const TextStyle(color: _teal, fontWeight: FontWeight.w800)),
             ],
           ),
         ),
@@ -193,10 +335,12 @@ class _QuizScreenState extends State<QuizScreen> {
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 8, 16, 16),
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(18)),
+      decoration:
+          BoxDecoration(color: color, borderRadius: BorderRadius.circular(18)),
       child: Row(
         children: [
-          Icon(ok ? Icons.check_circle_rounded : Icons.cancel_rounded, color: Colors.white, size: 34),
+          Icon(ok ? Icons.check_circle_rounded : Icons.cancel_rounded,
+              color: Colors.white, size: 34),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
@@ -204,7 +348,9 @@ class _QuizScreenState extends State<QuizScreen> {
               children: [
                 Text(ok ? 'Correct!  +1 point' : 'Incorrect',
                     style: const TextStyle(
-                        color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800)),
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800)),
                 Text(
                   ok
                       ? q.lesson.title
@@ -223,7 +369,8 @@ class _QuizScreenState extends State<QuizScreen> {
             ),
           FilledButton(
             onPressed: _next,
-            style: FilledButton.styleFrom(backgroundColor: Colors.white, foregroundColor: color),
+            style: FilledButton.styleFrom(
+                backgroundColor: Colors.white, foregroundColor: color),
             child: Text(_index + 1 >= _questions.length ? 'Finish' : 'Next'),
           ),
         ],
@@ -239,27 +386,71 @@ class _QuizScreenState extends State<QuizScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(pct >= 70 ? Icons.emoji_events_rounded : Icons.school_rounded,
-                size: 72, color: pct >= 70 ? const Color(0xFFE8782F) : _teal),
+            Icon(
+                pct >= 70
+                    ? Icons.emoji_events_rounded
+                    : Icons.school_rounded,
+                size: 72,
+                color: pct >= 70 ? const Color(0xFFE8782F) : _teal),
             const SizedBox(height: 12),
             Text('$_score / ${_questions.length}',
-                style: const TextStyle(color: _ink, fontSize: 40, fontWeight: FontWeight.w800)),
-            Text('$pct% correct', style: const TextStyle(color: _muted, fontSize: 15)),
+                style: const TextStyle(
+                    color: _ink, fontSize: 40, fontWeight: FontWeight.w800)),
+            Text('$pct% correct',
+                style: const TextStyle(color: _muted, fontSize: 15)),
+            const SizedBox(height: 16),
+            if (_saving)
+              const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: _teal)),
+                  SizedBox(width: 10),
+                  Text('Saving your score…',
+                      style: TextStyle(color: _muted, fontSize: 13)),
+                ],
+              ),
+            if (_saveFailed)
+              OutlinedButton.icon(
+                onPressed: _submitScore,
+                icon: const Icon(Icons.refresh_rounded),
+                label: const Text('Retry saving score'),
+                style: OutlinedButton.styleFrom(foregroundColor: _teal),
+              ),
+            if (!_saving && !_saveFailed && !_serverPassed)
+              const Padding(
+                padding: EdgeInsets.only(top: 8),
+                child: Text(
+                  'Not quite there yet. Retake the quiz to unlock the next category.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: _muted, fontSize: 13),
+                ),
+              ),
             const SizedBox(height: 24),
             SizedBox(
               width: double.infinity,
               height: 52,
               child: FilledButton(
-                onPressed: _restart,
+                onPressed: _saving ? null : _restart,
                 style: FilledButton.styleFrom(
                   backgroundColor: _teal,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14)),
                 ),
-                child: const Text('Try again', style: TextStyle(fontWeight: FontWeight.w700)),
+                child: const Text('Try again',
+                    style: TextStyle(fontWeight: FontWeight.w700)),
               ),
             ),
             const SizedBox(height: 10),
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Back to quizzes')),
+            TextButton(
+              // Was: Navigator.pop(context) — no result, so LearnScreen's
+              // await resumed with null and the tile never unlocked.
+              onPressed: _saving ? null : _finishQuiz,
+              child: const Text('Back to lessons'),
+            ),
           ],
         ),
       ),
@@ -293,12 +484,26 @@ class _LiveQuestionState extends State<_LiveQuestion> {
   late final Map<String, String> _titleByLabel = {
     for (final l in widget.category.lessons) modelLabelForLesson(l.id): l.title
   };
+  late final List<String> _candidates = _titleByLabel.keys.toList();
   late final String _target = modelLabelForLesson(widget.lesson.id);
+
   Timer? _timer;
   late int _left = widget.seconds;
   bool _started = false; // countdown starts once a hand is seen
   bool _done = false;
+  bool _mountView = false;
   LiveSignState? _state;
+
+  @override
+  void initState() {
+    super.initState();
+    // Let the previous camera/detectors finish releasing before a new set is
+    // created. The countdown only starts once a hand is seen, so this costs
+    // the user no quiz time.
+    Future.delayed(const Duration(milliseconds: 500), () {
+      if (mounted) setState(() => _mountView = true);
+    });
+  }
 
   @override
   void dispose() {
@@ -316,7 +521,8 @@ class _LiveQuestionState extends State<_LiveQuestion> {
         setState(() => _left--);
         if (_left <= 0) {
           t.cancel();
-          _finish(false, _titleOf(_state?.prediction.sign) ?? 'no match in time');
+          _finish(false,
+              _titleOf(_state?.prediction.sign) ?? 'no match in time');
         }
       });
     }
@@ -325,7 +531,9 @@ class _LiveQuestionState extends State<_LiveQuestion> {
     }
   }
 
-  String? _titleOf(String? label) => label == null ? null : (_titleByLabel[label] ?? label);
+  String? _titleOf(String? label) => label == null
+      ? null
+      : (label == V4SignRecognizer.noneLabel ? 'Not a sign' : (_titleByLabel[label] ?? label));
 
   void _finish(bool ok, String? text) {
     if (_done) return;
@@ -348,21 +556,29 @@ class _LiveQuestionState extends State<_LiveQuestion> {
               const SizedBox(width: 8),
               Expanded(
                 child: Text.rich(TextSpan(children: [
-                  const TextSpan(text: 'Sign:  ', style: TextStyle(color: _muted, fontSize: 16)),
+                  const TextSpan(
+                      text: 'Sign:  ',
+                      style: TextStyle(color: _muted, fontSize: 16)),
                   TextSpan(
                       text: widget.lesson.title,
-                      style: const TextStyle(color: _ink, fontSize: 22, fontWeight: FontWeight.w800)),
+                      style: const TextStyle(
+                          color: _ink,
+                          fontSize: 22,
+                          fontWeight: FontWeight.w800)),
                 ])),
               ),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                 decoration: BoxDecoration(
-                  color: _left <= 3 ? Colors.red.shade50 : const Color(0xFFE6F4F1),
+                  color:
+                      _left <= 3 ? Colors.red.shade50 : const Color(0xFFE6F4F1),
                   borderRadius: BorderRadius.circular(20),
                 ),
-                child: Text(_started ? '${_left}s' : 'show hands',
+                child: Text(_started ? '${_left}s' : 'Show hands',
                     style: TextStyle(
-                        color: _left <= 3 ? Colors.red.shade700 : _teal, fontWeight: FontWeight.w800)),
+                        color: _left <= 3 ? Colors.red.shade700 : _teal,
+                        fontWeight: FontWeight.w800)),
               ),
             ],
           ),
@@ -378,14 +594,19 @@ class _LiveQuestionState extends State<_LiveQuestion> {
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
-                    LiveSignView(
-                      candidates: _titleByLabel.keys.toList(),
-                      letters: widget.category.id == lettersCategoryId,
-                      onUpdate: _onUpdate,
-                    ),
+                    _mountView ? LiveSignView(
+                          active: !widget.answered,
+                          candidates: _titleByLabel.keys.toList(),
+                          letters: widget.category.id == lettersCategoryId,
+                          onUpdate: _onUpdate,
+                        ): const Center(
+                          child: CircularProgressIndicator(color: Color(0xFF0D9488))),
                     if (s != null && s.top3.isNotEmpty)
                       Positioned(
-                          top: 10, left: 10, child: Top3Panel(state: s, titleOf: (l) => _titleOf(l)!)),
+                          top: 10,
+                          left: 10,
+                          child: Top3Panel(
+                              state: s, titleOf: (l) => _titleOf(l)!)),
                     if (!widget.answered)
                       Positioned(
                         bottom: 10,
@@ -395,6 +616,7 @@ class _LiveQuestionState extends State<_LiveQuestion> {
                           sign: _titleOf(s?.prediction.sign),
                           confidence: s?.prediction.confidence ?? 0,
                           locked: false,
+                          notRecognized: s?.notRecognized ?? false,
                         ),
                       ),
                   ],
@@ -430,34 +652,60 @@ class _VideoQuestionState extends State<_VideoQuestion> {
   @override
   Widget build(BuildContext context) {
     final q = widget.question;
-    return ListView(
-      padding: const EdgeInsets.symmetric(horizontal: 22),
-      children: [
-        const Row(
-          children: [
-            Icon(Icons.ondemand_video_rounded, color: _teal),
-            SizedBox(width: 8),
-            Text('Which sign is this?',
-                style: TextStyle(color: _ink, fontSize: 20, fontWeight: FontWeight.w800)),
-          ],
-        ),
-        const SizedBox(height: 12),
-        _LoopingVideo(asset: q.lesson.videoAsset!),
-        const SizedBox(height: 16),
-        for (final o in q.options)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 10),
-            child: _OptionButton(
-              title: o.title,
-              state: !widget.answered
-                  ? _OptState.idle
-                  : o == q.lesson
-                      ? _OptState.correct
-                      : (o == widget.picked ? _OptState.wrong : _OptState.idle),
-              onTap: widget.answered ? null : () => widget.onPick(o),
+    _OptState stateOf(Lesson o) => !widget.answered
+        ? _OptState.idle
+        : o == q.lesson
+            ? _OptState.correct
+            : (o == widget.picked ? _OptState.wrong : _OptState.idle);
+    Widget option(int i) => i < q.options.length
+        ? _OptionButton(
+            title: q.options[i].title,
+            state: stateOf(q.options[i]),
+            onTap: widget.answered ? null : () => widget.onPick(q.options[i]),
+          )
+        : const SizedBox.shrink();
+    // Everything fits on one screen: the video takes the free space, the four
+    // answers sit below it as a 2 x 2 grid (no scrolling).
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.ondemand_video_rounded, color: _teal),
+              SizedBox(width: 8),
+              Text('Which sign is this?',
+                  style: TextStyle(color: _ink, fontSize: 20, fontWeight: FontWeight.w800)),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Expanded(child: Center(child: _LoopingVideo(asset: q.lesson.videoAsset!))),
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 136,
+            child: Column(
+              children: [
+                Expanded(
+                  child: Row(children: [
+                    Expanded(child: option(0)),
+                    const SizedBox(width: 10),
+                    Expanded(child: option(1)),
+                  ]),
+                ),
+                const SizedBox(height: 10),
+                Expanded(
+                  child: Row(children: [
+                    Expanded(child: option(2)),
+                    const SizedBox(width: 10),
+                    Expanded(child: option(3)),
+                  ]),
+                ),
+              ],
             ),
           ),
-      ],
+        ],
+      ),
     );
   }
 }
@@ -473,8 +721,10 @@ class _OptionButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final (bg, fg, border) = switch (state) {
-      _OptState.correct => (Colors.green.shade600, Colors.white, Colors.green.shade600),
-      _OptState.wrong => (Colors.red.shade600, Colors.white, Colors.red.shade600),
+      _OptState.correct =>
+        (Colors.green.shade600, Colors.white, Colors.green.shade600),
+      _OptState.wrong =>
+        (Colors.red.shade600, Colors.white, Colors.red.shade600),
       _OptState.idle => (Colors.white, _ink, _border),
     };
     return Material(
@@ -484,19 +734,30 @@ class _OptionButton extends StatelessWidget {
         borderRadius: BorderRadius.circular(16),
         onTap: onTap,
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          alignment: Alignment.center,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: border),
+            border: Border.all(color: border, width: 1.5),
           ),
           child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Expanded(
+              if (state == _OptState.correct)
+                const Padding(
+                    padding: EdgeInsets.only(right: 4),
+                    child: Icon(Icons.check_rounded, color: Colors.white, size: 20)),
+              if (state == _OptState.wrong)
+                const Padding(
+                    padding: EdgeInsets.only(right: 4),
+                    child: Icon(Icons.close_rounded, color: Colors.white, size: 20)),
+              Flexible(
                 child: Text(title,
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(color: fg, fontSize: 16, fontWeight: FontWeight.w700)),
               ),
-              if (state == _OptState.correct) const Icon(Icons.check_rounded, color: Colors.white),
-              if (state == _OptState.wrong) const Icon(Icons.close_rounded, color: Colors.white),
             ],
           ),
         ),
@@ -515,7 +776,8 @@ class _LoopingVideo extends StatefulWidget {
 }
 
 class _LoopingVideoState extends State<_LoopingVideo> {
-  late final VideoPlayerController _c = VideoPlayerController.asset(widget.asset);
+  late final VideoPlayerController _c =
+      VideoPlayerController.asset(widget.asset);
   bool _ready = false;
 
   @override
@@ -547,7 +809,8 @@ class _LoopingVideoState extends State<_LoopingVideo> {
           aspectRatio: _ready ? _c.value.aspectRatio : 16 / 9,
           child: _ready
               ? VideoPlayer(_c)
-              : const Center(child: CircularProgressIndicator(color: Color(0xFF0D9488))),
+              : const Center(
+                  child: CircularProgressIndicator(color: Color(0xFF0D9488))),
         ),
       ),
     );
@@ -571,9 +834,11 @@ class _HintDialog extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text('How to sign "${lesson.title}"',
-                style: const TextStyle(color: _ink, fontSize: 18, fontWeight: FontWeight.w800)),
+                style: const TextStyle(
+                    color: _ink, fontSize: 18, fontWeight: FontWeight.w800)),
             const SizedBox(height: 12),
-            if (lesson.videoAsset != null) _LoopingVideo(asset: lesson.videoAsset!),
+            if (lesson.videoAsset != null)
+              _LoopingVideo(asset: lesson.videoAsset!),
             const SizedBox(height: 12),
             Text(
               months

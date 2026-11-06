@@ -1,8 +1,50 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter/material.dart';
 
-class ProfilePage extends StatelessWidget {
+class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
+  
+  @override
+  State<ProfilePage> createState() => _ProfilePageState();
+}
+
+
+class _ProfilePageState extends State<ProfilePage> {
+  late Future<int> _streakFuture;
+  late Future<int> _lessonsFuture; 
+
+  @override
+  void initState() {
+    super.initState();
+    _streakFuture = _fetchStreak();
+    _lessonsFuture = _fetchLessonsCompleted(); 
+  }
+
+  Future<int> _fetchStreak() async {
+    try {
+      final response = await Supabase.instance.client.rpc('get_streak');
+      if (response is List) {
+        return response.isNotEmpty ? response.first as int : 0;
+      }
+      return response as int? ?? 0;
+    } catch (e) {
+      debugPrint('Error fetching streak: $e');
+      return 0;
+    }
+  }
+
+  Future<int> _fetchLessonsCompleted() async {
+    try {
+      final response = await Supabase.instance.client.rpc('get_lessons_completed');
+      if (response is List) {
+        return response.isNotEmpty ? response.first as int : 0;
+      }
+      return response as int? ?? 0;
+    } catch (e) {
+      debugPrint('Error fetching lessons completed: $e');
+      return 0;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -44,18 +86,38 @@ class ProfilePage extends StatelessWidget {
             style: const TextStyle(color: Color(0xFF6B8581)),
           ),
           const SizedBox(height: 30),
-          _buildInfoTile(
-            Icons.local_fire_department_outlined,
-            'Current streak',
-            '3 days',
-          ),
-          _buildInfoTile(
-            Icons.school_outlined,
-            'Lessons completed',
-            '0 lessons',
+          FutureBuilder<int>(
+              future: _streakFuture,
+              builder: (context, snapshot) {
+                String streakText = '...';
+                if (snapshot.connectionState == ConnectionState.done) {
+                  final streak = snapshot.data ?? 0;
+                  streakText = '$streak ${streak == 1 ? 'day' : 'days'}';
+                }
+                return _buildInfoTile(
+                  Icons.local_fire_department_outlined,
+                  'Current streak',
+                  streakText,
+                );
+              },
+            ),
+          FutureBuilder<int>(
+            future: _lessonsFuture, 
+            builder: (context, snapshot) {
+              String categoriesText = '...';
+              if (snapshot.connectionState == ConnectionState.done) {
+                final count = snapshot.data ?? 0;
+                categoriesText = '$count ${count == 1 ? 'category' : 'categories'}';
+              }
+              return _buildInfoTile(
+                Icons.school_outlined, 
+                'Categories completed', 
+                categoriesText,         
+              );
+            },
           ),
         ],
-      ),
+      ),  
     );
   }
 
